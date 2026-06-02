@@ -1,0 +1,28 @@
+services:
+  insurance_claim_web_backend:
+    build:
+      context: ./backend
+    environment:
+      - API_PREFIX=/api
+      - ENV=production
+      - CORS_ORIGINS=["http://localhost:5173","http://localhost:5175"]
+    expose:
+      - "8000"
+    volumes:
+      - ./STATE.md:/app/STATE.md:ro
+    networks:
+      - web
+
+  insurance_claim_web_frontend:
+    build:
+      context: ./frontend
+    expose:
+      - "80"
+    networks:
+      - web
+    labels:
+      caddy: "${CADDY_SCHEME-http://}insurance-claim.${HOST_SUFFIX:-localhost}"
+      caddy.0_reverse_proxy: "/api* insurance_claim_web_backend:8000"
+      caddy.1_reverse_proxy: "/mcp* insurance_claim_web_backend:8000"
+      caddy.2_reverse_proxy: "/state-doc* insurance_claim_web_backend:8000"
+      caddy.3_reverse_proxy: "insurance_claim_web_frontend:80"
