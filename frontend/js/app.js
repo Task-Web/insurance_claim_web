@@ -32,15 +32,26 @@ const OnlineAPI = {
 		return response.json();
 	},
 
-	getState() {
-		return this.request('/state');
+	getClaimWorkspace() {
+		return this.request('/claims/workspace');
 	},
 
-	patchState(data, note) {
-		return this.request('/state', {
-			method: 'PATCH',
-			body: JSON.stringify({ data, note })
+	saveDraft(draft) {
+		return this.request('/claims/draft', {
+			method: 'PUT',
+			body: JSON.stringify(draft)
 		});
+	},
+
+	submitClaim(claim) {
+		return this.request('/claims', {
+			method: 'POST',
+			body: JSON.stringify(claim)
+		});
+	},
+
+	clearClaims() {
+		return this.request('/claims', { method: 'DELETE' });
 	},
 
 	uploadFiles(files) {
@@ -54,8 +65,8 @@ const OnlineAPI = {
 
 	async getSubmittedClaims() {
 		try {
-			const state = await this.getState();
-			return state?.state?.data?.submitted_claims || [];
+			const workspace = await this.getClaimWorkspace();
+			return workspace?.submitted_claims || [];
 		} catch (error) {
 			console.warn('Failed to load submitted claims from server:', error);
 			return [];
@@ -281,8 +292,8 @@ class DataStorage {
 	async loadDraftFromServer() {
 		try {
 			const hasLocalDraft = Boolean(localStorage.getItem(this.storageKey));
-			const state = await OnlineAPI.getState();
-			const draft = state?.state?.data?.current_claim;
+			const workspace = await OnlineAPI.getClaimWorkspace();
+			const draft = workspace?.draft;
 			if (draft) {
 				AppState.formData = draft.formData || {};
 				AppState.uploadedFiles = Array.isArray(draft.uploadedFiles) ? draft.uploadedFiles : [];
@@ -311,17 +322,11 @@ class DataStorage {
 		}
 
 		try {
-			await OnlineAPI.patchState(
-				{
-					current_claim: {
-						formData: { ...AppState.formData },
-						uploadedFiles: this.serializeUploadedFiles(),
-						currentStep: AppState.currentStep,
-						updatedAt: new Date().toISOString()
-					}
-				},
-				'Insurance claim draft saved'
-			);
+			await OnlineAPI.saveDraft({
+				formData: { ...AppState.formData },
+				uploadedFiles: this.serializeUploadedFiles(),
+				currentStep: AppState.currentStep
+			});
 		} catch (error) {
 			console.warn('Failed to save draft to server:', error);
 			if (!silent) {
@@ -475,28 +480,14 @@ class DataStorage {
 	// Save current claim to submitted claims list
 	async saveSubmittedClaim() {
 		try {
-			const submittedClaims = await OnlineAPI.getSubmittedClaims();
-			
-			// Prepare current claim data with timestamp and unique ID
-			const claimId = `claim-${Date.now()}-${Math.random().toString(36).slice(2,9)}`;
 			const claimData = {
-				id: claimId,
 				formData: { ...AppState.formData },
-				uploadedFiles: this.serializeUploadedFiles(),
-				timestamp: new Date().toISOString(),
-				submittedAt: new Date().toISOString()
+				uploadedFiles: this.serializeUploadedFiles()
 			};
-			
-			// Add to submitted claims list
-			submittedClaims.push(claimData);
+			const result = await OnlineAPI.submitClaim(claimData);
+			const claimId = result.claim.id;
+			const submittedClaims = await OnlineAPI.getSubmittedClaims();
 			localStorage.setItem(this.submittedClaimsKey, JSON.stringify(submittedClaims));
-			await OnlineAPI.patchState(
-				{
-					submitted_claims: submittedClaims,
-					current_claim: null
-				},
-				'Insurance claim submitted'
-			);
 			
 			console.log('Claim saved to submitted claims list:', claimId);
 			return claimId;
@@ -1744,10 +1735,7 @@ document.head.appendChild(style);
 window.clearAllData = async function() {
 	if (confirm('⚠️ Clear ALL data? This will delete all claims and uploaded files!')) {
 		try {
-			await OnlineAPI.patchState(
-				{ current_claim: null, submitted_claims: [], uploads: [] },
-				'Insurance claim data cleared'
-			);
+			await OnlineAPI.clearClaims();
 		} catch (error) {
 			console.warn('Failed to clear server state:', error);
 		} finally {

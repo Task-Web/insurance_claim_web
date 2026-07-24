@@ -112,8 +112,8 @@
 
         async function loadSubmittedClaims() {
             try {
-                const state = await apiRequest('/state');
-                return state?.state?.data?.submitted_claims || [];
+                const workspace = await apiRequest('/claims/workspace');
+                return workspace?.submitted_claims || [];
             } catch (error) {
                 console.warn('Failed to load submitted claims from server, using local fallback:', error);
                 const submittedClaimsStr = localStorage.getItem('insurance-submitted-claims');

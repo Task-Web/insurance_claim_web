@@ -3,6 +3,7 @@ import os
 import platform
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
@@ -12,7 +13,16 @@ from mcp.server.fastmcp import FastMCP
 
 from .config import Settings, get_settings
 from .file_store import FileStore
-from .schemas import FileMetadata, InfoResponse, StatePatchRequest, StateRequest, StateResponse
+from .schemas import (
+    ClaimDraft,
+    ClaimSubmission,
+    ClaimWorkspaceResponse,
+    FileMetadata,
+    InfoResponse,
+    StatePatchRequest,
+    StateRequest,
+    StateResponse,
+)
 from .state_store import StateStore
 
 settings = get_settings()
@@ -20,7 +30,7 @@ store = StateStore()
 file_store = FileStore("files", settings.api_prefix)
 
 tags_metadata = [
-    {"name": "state", "description": "Manage per-user experiment state"},
+    {"name": "claims", "description": "Save drafts and submit insurance claims"},
     {"name": "files", "description": "Upload and fetch files scoped to a user cookie"},
     {"name": "system", "description": "Environment and health information"},
 ]
@@ -111,15 +121,13 @@ async def health() -> Dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/state-doc", tags=["system"])
-async def state_doc():
-    from pathlib import Path
-    content = Path("/app/STATE.md").read_text(encoding="utf-8")
-    return Response(content=content, media_type="text/plain; charset=utf-8")
-
-
 # when build on the basesite, the below endpoints about state management should remain unchanged
-@app.get(f"{settings.api_prefix}/state", response_model=StateResponse, tags=["state"])
+@app.get(
+    f"{settings.api_prefix}/state",
+    response_model=StateResponse,
+    tags=["state"],
+    include_in_schema=False,
+)
 async def get_state(user_id: str = Depends(get_user_id)) -> StateResponse:
     state = await store.get_state(user_id)
     return StateResponse(user_id=user_id, state=state)
@@ -130,6 +138,7 @@ async def get_state(user_id: str = Depends(get_user_id)) -> StateResponse:
     response_model=StateResponse,
     tags=["state"],
     summary="Replace state",
+    include_in_schema=False,
 )
 async def put_state(payload: StateRequest, user_id: str = Depends(get_user_id)) -> StateResponse:
     next_state = {"data": payload.data, "note": payload.note}
@@ -144,6 +153,7 @@ async def put_state(payload: StateRequest, user_id: str = Depends(get_user_id)) 
     response_model=StateResponse,
     tags=["state"],
     summary="Merge into existing state",
+    include_in_schema=False,
 )
 async def patch_state(
     payload: StatePatchRequest, user_id: str = Depends(get_user_id)
@@ -157,11 +167,59 @@ async def patch_state(
     response_model=StateResponse,
     tags=["state"],
     summary="Reset and clear state",
+    include_in_schema=False,
 )
 async def delete_state(user_id: str = Depends(get_user_id)) -> StateResponse:
     file_store.delete_user_files(user_id)
     state = await store.reset_state(user_id)
     return StateResponse(user_id=user_id, state=state)
+
+
+@app.get(
+    f"{settings.api_prefix}/claims/workspace",
+    response_model=ClaimWorkspaceResponse,
+    tags=["claims"],
+)
+async def get_claim_workspace(user_id: str = Depends(get_user_id)) -> ClaimWorkspaceResponse:
+    state = await store.get_state(user_id)
+    submitted = state.data.get("submitted_claims")
+    return ClaimWorkspaceResponse(
+        user_id=user_id,
+        draft=state.data.get("current_claim"),
+        submitted_claims=submitted if isinstance(submitted, list) else [],
+    )
+
+
+@app.put(f"{settings.api_prefix}/claims/draft", tags=["claims"])
+async def save_claim_draft(
+    payload: ClaimDraft, user_id: str = Depends(get_user_id)
+) -> Dict[str, Any]:
+    draft = payload.model_dump(by_alias=True, exclude_none=True)
+    draft["updatedAt"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    await store.save_claim_draft(user_id, draft)
+    return {"user_id": user_id, "draft": draft}
+
+
+@app.post(f"{settings.api_prefix}/claims", status_code=201, tags=["claims"])
+async def submit_claim(
+    payload: ClaimSubmission, user_id: str = Depends(get_user_id)
+) -> Dict[str, Any]:
+    timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    claim = {
+        "id": f"claim-{uuid.uuid4()}",
+        **payload.model_dump(by_alias=True, exclude_none=True),
+        "timestamp": timestamp,
+        "submittedAt": timestamp,
+    }
+    await store.submit_claim(user_id, claim)
+    return {"user_id": user_id, "claim": claim}
+
+
+@app.delete(f"{settings.api_prefix}/claims", tags=["claims"])
+async def clear_claim_data(user_id: str = Depends(get_user_id)) -> Dict[str, Any]:
+    await store.clear_claims(user_id)
+    file_store.delete_user_files(user_id)
+    return {"user_id": user_id, "cleared": True}
 
 
 @app.post(

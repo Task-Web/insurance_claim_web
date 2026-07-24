@@ -24,5 +24,4 @@ services:
       caddy: "${CADDY_SCHEME-http://}insurance-claim.${HOST_SUFFIX:-localhost}"
       caddy.0_reverse_proxy: "/api* insurance_claim_web_backend:8000"
       caddy.1_reverse_proxy: "/mcp* insurance_claim_web_backend:8000"
-      caddy.2_reverse_proxy: "/state-doc* insurance_claim_web_backend:8000"
       caddy.3_reverse_proxy: "insurance_claim_web_frontend:80"
