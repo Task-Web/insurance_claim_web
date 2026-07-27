@@ -34,6 +34,8 @@ def test_claim_draft_is_strict_cookie_scoped_and_preserves_unrelated_state() -> 
     workspace = client.get("/api/claims/workspace", params={"cookie": cookie})
     assert workspace.status_code == 200
     assert workspace.json()["draft"]["formData"]["insured-name"] == "Ada"
+    assert "evaluator_marker" not in workspace.json()
+    assert "keep" not in workspace.text
     assert state["data"]["evaluator_marker"] == {"keep": True}
     assert control_state("claim-contract-b")["data"]["current_claim"] is None
 
