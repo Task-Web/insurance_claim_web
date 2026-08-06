@@ -190,6 +190,12 @@ const AppState = {
 	uploadedFiles: []
 };
 
+function sanitizeClaimFormData(formData = {}) {
+	const sanitized = { ...formData };
+	delete sanitized['file-input'];
+	return sanitized;
+}
+
 // Data storage manager
 class DataStorage {
 	constructor() {
@@ -233,7 +239,7 @@ class DataStorage {
 		try {
 			// Save metadata only (avoid storing binary data in localStorage)
 			const dataToSave = {
-				formData: AppState.formData,
+				formData: sanitizeClaimFormData(AppState.formData),
 				uploadedFiles: this.serializeUploadedFiles(),
 				currentStep: AppState.currentStep,
 				timestamp: new Date().toISOString()
@@ -295,7 +301,7 @@ class DataStorage {
 			const workspace = await OnlineAPI.getClaimWorkspace();
 			const draft = workspace?.draft;
 			if (draft) {
-				AppState.formData = draft.formData || {};
+				AppState.formData = sanitizeClaimFormData(draft.formData);
 				AppState.uploadedFiles = Array.isArray(draft.uploadedFiles) ? draft.uploadedFiles : [];
 				AppState.currentStep = Number(draft.currentStep) || AppState.currentStep;
 				this.saveToStorage({ sync: false });
@@ -323,7 +329,7 @@ class DataStorage {
 
 		try {
 			await OnlineAPI.saveDraft({
-				formData: { ...AppState.formData },
+				formData: sanitizeClaimFormData(AppState.formData),
 				uploadedFiles: this.serializeUploadedFiles(),
 				currentStep: AppState.currentStep
 			});
@@ -340,7 +346,12 @@ class DataStorage {
 			const savedData = localStorage.getItem(this.storageKey);
 			if (savedData) {
 				const parsedData = JSON.parse(savedData);
-				AppState.formData = parsedData.formData || {};
+				const storedFormData = parsedData.formData || {};
+				AppState.formData = sanitizeClaimFormData(storedFormData);
+				if (Object.prototype.hasOwnProperty.call(storedFormData, 'file-input')) {
+					parsedData.formData = AppState.formData;
+					localStorage.setItem(this.storageKey, JSON.stringify(parsedData));
+				}
 				AppState.uploadedFiles = parsedData.uploadedFiles || [];
 				AppState.currentStep = Number(parsedData.currentStep) || AppState.currentStep;
 				console.log('Metadata loaded from local storage');
@@ -395,7 +406,9 @@ class DataStorage {
 		Object.keys(AppState.formData).forEach(key => {
 			const element = document.getElementById(key);
 			if (element) {
-				if (element.type === 'checkbox') {
+				if (element.type === 'file') {
+					delete AppState.formData[key];
+				} else if (element.type === 'checkbox') {
 					element.checked = AppState.formData[key];
 				} else {
 					element.value = AppState.formData[key];
@@ -481,7 +494,7 @@ class DataStorage {
 	async saveSubmittedClaim() {
 		try {
 			const claimData = {
-				formData: { ...AppState.formData },
+				formData: sanitizeClaimFormData(AppState.formData),
 				uploadedFiles: this.serializeUploadedFiles()
 			};
 			const result = await OnlineAPI.submitClaim(claimData);
@@ -626,7 +639,7 @@ class DataStorage {
 	// Public API to return current claim data (used by page or SW)
 	getClaimData() {
 		return {
-			formData: AppState.formData,
+			formData: sanitizeClaimFormData(AppState.formData),
 			uploadedFiles: AppState.uploadedFiles,
 			currentStep: AppState.currentStep,
 			timestamp: new Date().toISOString()
@@ -983,7 +996,9 @@ function collectFormData() {
 		if (!element.id) {
 			return;
 		}
-		if (element.type === 'checkbox') {
+		if (element.type === 'file') {
+			delete AppState.formData[element.id];
+		} else if (element.type === 'checkbox') {
 			AppState.formData[element.id] = element.checked;
 		} else if (element.value !== '') {
 			AppState.formData[element.id] = element.value;

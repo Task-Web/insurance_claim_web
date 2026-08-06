@@ -97,6 +97,49 @@ def test_submit_claim_is_atomic_and_visible_through_control_plane() -> None:
     assert state["data"]["submitted_claims"][-1] == claim
 
 
+def test_browser_submission_keeps_upload_metadata_out_of_form_data() -> None:
+    claim_file = {
+        "id": "file-receipt",
+        "name": "receipt.pdf",
+        "originalName": "receipt.pdf",
+        "size": 128,
+        "type": "application/pdf",
+        "url": "/api/files/stored__receipt.pdf",
+        "filename": "stored__receipt.pdf",
+    }
+    form_data = {
+        "insured-name": "Ada",
+        "id-number": "ID-123",
+        "phone": "+1234567890",
+        "accident-time": "2026-08-06",
+        "accident-situation": "traffic-accident",
+        "agreement": True,
+        "payee-name": "Ada",
+        "payee-phone": "+1234567890",
+        "bank-card": "12345678",
+    }
+
+    response = client.post(
+        "/api/claims",
+        params={"cookie": "claim-browser-submit"},
+        json={"formData": form_data, "uploadedFiles": [claim_file]},
+    )
+    assert response.status_code == 201
+    assert response.json()["claim"]["uploadedFiles"] == [claim_file]
+
+    polluted = client.post(
+        "/api/claims",
+        params={"cookie": "claim-browser-polluted"},
+        json={
+            "formData": {**form_data, "file-input": r"C:\fakepath\receipt.pdf"},
+            "uploadedFiles": [claim_file],
+        },
+    )
+    assert polluted.status_code == 422
+    assert polluted.json()["detail"][0]["loc"] == ["body", "formData", "file-input"]
+    assert control_state("claim-browser-polluted")["data"]["submitted_claims"] == []
+
+
 def test_invalid_submission_does_not_replace_collections() -> None:
     response = client.post(
         "/api/claims",
